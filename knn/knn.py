@@ -1,14 +1,14 @@
+import os
 import csv
 import random
 import math
 import operator
+from collections import namedtuple, defaultdict
 
 """
 following along with
 https://machinelearningmastery.com/tutorial-to-implement-k-nearest-neighbors-in-python-from-scratch/
 to implement K-nearest neighbors.
-
-todo: fix up the example code
 
 format of iris.data:
 ➜  knn head iris.data
@@ -18,15 +18,19 @@ format of iris.data:
 4.6,3.1,1.5,0.2,Iris-setosa
 """
 
-def loadDataset(filename, split, trainingSet=[] , testSet=[]):
+Dataset = namedtuple('Dataset', ['training_set', 'test_set'])
+Neighbor = namedtuple('Neighbor', ['instance', 'distance'])
+
+def loadDataset(filename, split):
     """
     loads dataset from filename.
     splits dataset according to given split ratio (decimal proportion)
     resulting in split proportion being allocated to the training set.
 
-    training and test set args are mutated to hold the allocated data.
-    todo: this function should probably return the split data set.
+    returns `Dataset` containing `training_set` and `test_set
     """
+    training_set = []
+    test_set = []
     with open(filename, 'r') as csvfile:
         lines = csv.reader(csvfile)
         dataset = list(lines)
@@ -34,9 +38,10 @@ def loadDataset(filename, split, trainingSet=[] , testSet=[]):
             for y in range(4):
                 dataset[x][y] = float(dataset[x][y])
             if random.random() < split:
-                trainingSet.append(dataset[x])
+                training_set.append(dataset[x])
             else:
-                testSet.append(dataset[x])
+                test_set.append(dataset[x])
+    return Dataset(training_set=training_set, test_set=test_set)
 
 def euclideanDistance(instance1, instance2, length):
     """
@@ -44,31 +49,32 @@ def euclideanDistance(instance1, instance2, length):
     the instances are assumed to be lists of measurements.
     euclidean distance uses length number of dimensions to calculate.
     """
-    distance = 0
-    for x in range(length):
-        distance += pow((instance1[x] - instance2[x]), 2)
-    return math.sqrt(distance)
+    def squared_difference(first, second):
+        return (first - second) ** 2
 
-def getNeighbors(trainingSet, testInstance, k):
+    summed_squares = 0
+    for x in range(length):
+        summed_squares += squared_difference(first=instance1[x], second=instance2[x])
+    return math.sqrt(summed_squares)
+
+def getNeighbors(training_set, test_instance, k):
     """
     given a training set and test instance, returns the k-nearest neighbors from the
     test instance
     """
     # distances will become a list of tuples
     # each tuple containing (a_row_of_from_training_set, distance_from_test_instance)
-    distances = []
-    length = len(testInstance) - 1
-    for x in range(len(trainingSet)):
-        dist = euclideanDistance(testInstance, trainingSet[x], length)
-        distances.append((trainingSet[x], dist))
-    distances.sort(key=operator.itemgetter(1))
+    neighbors = []
+    length = len(test_instance) - 1
+    for training_instance in training_set:
+        distance = euclideanDistance(test_instance, training_instance, length)
+        neighbors.append(Neighbor(instance=training_instance, distance=distance))
     # fun fact: python list sort uses TimSort
     # https://en.wikipedia.org/wiki/Timsort
     # https://hg.python.org/cpython/file/tip/Objects/listsort.txt
-    neighbors = []
-    for x in range(k):
-        neighbors.append(distances[x][0])
-    return neighbors
+    neighbors.sort(key=lambda neighbor: neighbor.distance)
+    k_nearest = neighbors[0:k]
+    return k_nearest
 
 def getResponse(neighbors):
     """
@@ -77,42 +83,46 @@ def getResponse(neighbors):
     tallies up the occurrences of each class
     and returns the class with the highest vote
     """
-    classVotes = {}
-    for x in range(len(neighbors)):
-        response = neighbors[x][-1]
-        if response in classVotes:
-            classVotes[response] += 1
-        else:
-            classVotes[response] = 1
-    sortedVotes = sorted(classVotes.items(), key=operator.itemgetter(1), reverse=True)
-    return sortedVotes[0][0]
+    class_votes = defaultdict(int)
+    for neighbor in neighbors:
+        instance_class = neighbor.instance[-1]
+        class_votes[instance_class] += 1
+    winner = max(class_votes.keys(), key=(lambda class_vote_key: class_votes[class_vote_key]))
+    return winner
 
-def getAccuracy(testSet, predictions):
-    correct = 0
-    for x in range(len(testSet)):
-        if testSet[x][-1] == predictions[x]:
-            correct += 1
-    return (correct/float(len(testSet))) * 100.0
+def getAccuracy(test_set, predictions):
+    correct = [test_instance for index, test_instance in enumerate(test_set) if test_instance[-1] == predictions[index]]
+    accuracy = 100 * float(len(correct)) / float(len(test_set))
+    return accuracy
 
 def main():
     # prepare data
-    trainingSet=[]
-    testSet=[]
-    split = 0.67
-    loadDataset('iris.data', split, trainingSet, testSet)
-    print('Train set len: ' + repr(len(trainingSet)))
-    print('Test set len: ' + repr(len(testSet)))
+    dataset = loadDataset(
+        filename=os.path.join(os.path.dirname(__file__), 'iris.data'),
+        split=0.67
+        )
+    training_set, test_set = dataset.training_set, dataset.test_set
+    print('Training set len: ' + repr(len(training_set)))
+    print('Test set len: ' + repr(len(test_set)))
     # generate predictions
     predictions=[]
     k = 3
     print(f"k: {k}")
-    for x in range(len(testSet)):
-        neighbors = getNeighbors(trainingSet, testSet[x], k)
-        result = getResponse(neighbors)
+    for test_instance in test_set:
+        neighbors = getNeighbors(
+            training_set=training_set,
+            test_instance=test_instance,
+            k=k
+            )
+        result = getResponse(neighbors=neighbors)
         predictions.append(result)
-        print('> predicted=' + repr(result) + ', actual=' + repr(testSet[x][-1]))
-    accuracy = getAccuracy(testSet, predictions)
-    print('Accuracy: ' + repr(accuracy) + '%')
+        print(f"""
+    prediction: {result}
+    actual: {test_instance[-1]}
+    correct: {result == test_instance[-1]}
+            """)
+    accuracy = getAccuracy(test_set=test_set, predictions=predictions)
+    print(f"accuracy: {accuracy}%")
 
 if __name__ == '__main__':
     main()
